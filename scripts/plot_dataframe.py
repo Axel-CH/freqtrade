@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Script to display when the bot will buy a specific pair
+Script to display when the bot will buy on specific pair(s)
 
 Mandatory Cli parameters:
--p / --pair: pair to examine
+-p / --pairs: pair(s) to examine
 
 Option but recommended
 -s / --strategy: strategy to use
 
 
 Optional Cli parameters
--d / --datadir: path to pair backtest data
+-d / --datadir: path to pair(s) backtest data
 --timerange: specify what timerange of data to use.
--l / --live: Live, to download the latest ticker for the pair
+-l / --live: Live, to download the latest ticker for the pair(s)
 -db / --db-url: Show trades stored in database
 
 
@@ -21,7 +21,7 @@ Row 1: sma, ema3, ema5, ema10, ema50
 Row 3: macd, rsi, fisher_rsi, mfi, slowd, slowk, fastd, fastk
 
 Example of usage:
-> python3 scripts/plot_dataframe.py --pair BTC/EUR -d user_data/data/ --indicators1 sma,ema3
+> python3 scripts/plot_dataframe.py --pairs BTC/EUR,XRP/BTC -d user_data/data/ --indicators1 sma,ema3
 --indicators2 fastk,fastd
 """
 import json
@@ -111,15 +111,15 @@ def plot_analyzed_dataframe(args: Namespace) -> None:
     _CONF.update(setup_configuration(args))
 
     print(_CONF)
-    # Set the pair to audit
-    pair = args.pair
+    # Set the pairs to audit
+    pairs = args.pairs
 
-    if pair is None:
-        logger.critical('Parameter --pair mandatory;. E.g --pair ETH/BTC')
+    if pairs is None:
+        logger.critical('Parameter --pairs mandatory;. E.g --pairs ETH/BTC,XRP/BTC')
         exit()
 
-    if '/' not in pair:
-        logger.critical('--pair format must be XXX/YYY')
+    if '/' not in pairs:
+        logger.critical('--pairs format must be XXX/YYY')
         exit()
 
     # Set timerange to use
@@ -139,49 +139,54 @@ def plot_analyzed_dataframe(args: Namespace) -> None:
     # Set the ticker to use
     tick_interval = strategy.ticker_interval
 
-    # Load pair tickers
-    tickers = {}
-    if args.live:
-        logger.info('Downloading pair.')
-        exchange.refresh_tickers([pair], tick_interval)
-        tickers[pair] = exchange.klines(pair)
-    else:
-        tickers = history.load_data(
-            datadir=Path(_CONF.get("datadir")),
-            pairs=[pair],
-            ticker_interval=tick_interval,
-            refresh_pairs=_CONF.get('refresh_pairs', False),
-            timerange=timerange,
-            exchange=Exchange(_CONF)
+    # Load pairs tickers
+    pairs = pairs.split(",")
+    for pair in pairs:
+        tickers = {}
+        
+        if args.live:
+            logger.info('Downloading pair.')
+            exchange.refresh_tickers([pair], tick_interval)
+            tickers[pair] = exchange.klines(pair)
+        else:
+            tickers = history.load_data(
+                datadir=Path(_CONF.get("datadir")),
+                pairs=[pair],
+                ticker_interval=tick_interval,
+                refresh_pairs=_CONF.get('refresh_pairs', False),
+                timerange=timerange,
+                exchange=Exchange(_CONF)
+            )
+
+            # No ticker found, or impossible to download
+            if tickers == {}:
+                exit()
+
+        # Get trades already made from the DB
+        trades = load_trades(args, pair, timerange)
+
+        dataframes = strategy.tickerdata_to_dataframe(tickers)
+
+        dataframe = dataframes[pair]
+        dataframe = strategy.advise_buy(dataframe, {'pair': pair})
+        dataframe = strategy.advise_sell(dataframe, {'pair': pair})
+
+        if len(dataframe.index) > args.plot_limit:
+            logger.warning('Ticker contained more than %s candles as defined '
+                        'with --plot-limit, clipping.', args.plot_limit)
+        dataframe = dataframe.tail(args.plot_limit)
+
+        trades = trades.loc[trades['opents'] >= dataframe.iloc[0]['date']]
+        fig = generate_graph(
+            pair=pair,
+            trades=trades,
+            data=dataframe,
+            args=args
         )
+        pair_name = pair.replace("/", "_")
+        file_name = 'freqtrade-plot-' + pair_name + '-' + tick_interval + '.html'
 
-        # No ticker found, or impossible to download
-        if tickers == {}:
-            exit()
-
-    # Get trades already made from the DB
-    trades = load_trades(args, pair, timerange)
-
-    dataframes = strategy.tickerdata_to_dataframe(tickers)
-
-    dataframe = dataframes[pair]
-    dataframe = strategy.advise_buy(dataframe, {'pair': pair})
-    dataframe = strategy.advise_sell(dataframe, {'pair': pair})
-
-    if len(dataframe.index) > args.plot_limit:
-        logger.warning('Ticker contained more than %s candles as defined '
-                       'with --plot-limit, clipping.', args.plot_limit)
-    dataframe = dataframe.tail(args.plot_limit)
-
-    trades = trades.loc[trades['opents'] >= dataframe.iloc[0]['date']]
-    fig = generate_graph(
-        pair=pair,
-        trades=trades,
-        data=dataframe,
-        args=args
-    )
-
-    plot(fig, filename=str(Path('user_data').joinpath('freqtrade-plot.html')))
+        plot(fig, filename=str(Path('user_data').joinpath(file_name)))
 
 
 def generate_graph(pair, trades: pd.DataFrame, data: pd.DataFrame, args) -> tools.make_subplots:
