@@ -141,7 +141,9 @@ def plot_analyzed_dataframe(args: Namespace) -> None:
 
     # Load pairs tickers
     pairs = pairs.split(",")
+    pair_counter = 0
     for pair in pairs:
+        pair_counter = pair_counter + 1
         tickers = {}
         
         if args.live:
@@ -183,10 +185,19 @@ def plot_analyzed_dataframe(args: Namespace) -> None:
             data=dataframe,
             args=args
         )
+
         pair_name = pair.replace("/", "_")
         file_name = 'freqtrade-plot-' + pair_name + '-' + tick_interval + '.html'
 
-        plot(fig, filename=str(Path('user_data').joinpath(file_name)))
+        if not os.path.exists('user_data/plots'):
+            try:
+                os.makedirs('user_data/plots')
+            except OSError as e:
+                raise
+
+        plot(fig, filename=str(Path('user_data/plots').joinpath(file_name)))
+        if pair_counter == len(pairs):
+            plot(fig, filename=str(Path('user_data').joinpath('freqtrade-plot.html')))
 
 
 def generate_graph(pair, trades: pd.DataFrame, data: pd.DataFrame, args) -> tools.make_subplots:
