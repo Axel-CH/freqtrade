@@ -27,6 +27,7 @@ Example of usage:
 import json
 import logging
 import sys
+import os
 from argparse import Namespace
 from pathlib import Path
 from typing import Dict, List, Any
@@ -74,24 +75,28 @@ def load_trades(args: Namespace, pair: str, timerange: TimeRange) -> pd.DataFram
         # must align with columns in backtest.py
         columns = ["pair", "profit", "opents", "closets", "index", "duration",
                    "open_rate", "close_rate", "open_at_end", "sell_reason"]
-        with file.open() as f:
-            data = json.load(f)
-            trades = pd.DataFrame(data, columns=columns)
-        trades = trades.loc[trades["pair"] == pair]
-        if timerange:
-            if timerange.starttype == 'date':
-                trades = trades.loc[trades["opents"] >= timerange.startts]
-            if timerange.stoptype == 'date':
-                trades = trades.loc[trades["opents"] <= timerange.stopts]
+        if os.path.exists(file):
+            with file.open() as f:
+                data = json.load(f)
+                trades = pd.DataFrame(data, columns=columns)
+            trades = trades.loc[trades["pair"] == pair]
+            if timerange:
+                if timerange.starttype == 'date':
+                    trades = trades.loc[trades["opents"] >= timerange.startts]
+                if timerange.stoptype == 'date':
+                    trades = trades.loc[trades["opents"] <= timerange.stopts]
 
-        trades['opents'] = pd.to_datetime(trades['opents'],
-                                          unit='s',
-                                          utc=True,
-                                          infer_datetime_format=True)
-        trades['closets'] = pd.to_datetime(trades['closets'],
-                                           unit='s',
-                                           utc=True,
-                                           infer_datetime_format=True)
+            trades['opents'] = pd.to_datetime(trades['opents'],
+                                            unit='s',
+                                            utc=True,
+                                            infer_datetime_format=True)
+            trades['closets'] = pd.to_datetime(trades['closets'],
+                                            unit='s',
+                                            utc=True,
+                                            infer_datetime_format=True)
+        else:
+            trades = pd.DataFrame([], columns=columns)
+
     return trades
 
 
