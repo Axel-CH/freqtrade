@@ -179,6 +179,9 @@ def plot_analyzed_dataframe(args: Namespace) -> None:
         dataframe = dataframe.tail(args.plot_limit)
 
         trades = trades.loc[trades['opents'] >= dataframe.iloc[0]['date']]
+
+        ##PLOTTING PART TO SEPARATE
+
         fig = generate_graph(
             pair=pair,
             trades=trades,
@@ -198,6 +201,95 @@ def plot_analyzed_dataframe(args: Namespace) -> None:
         plot(fig, filename=str(Path('user_data/plots').joinpath(file_name)))
         if pair_counter == len(pairs):
             plot(fig, filename=str(Path('user_data').joinpath('freqtrade-plot.html')))
+
+def generate_plot_file(fig, pair, tick_interval, is_last) -> None:
+    logger.info('Generate plot file for %s', pair)
+
+    pair_name = pair.replace("/", "_")
+    file_name = 'freqtrade-plot-' + pair_name + '-' + tick_interval + '.html'
+
+    if not os.path.exists('user_data/plots'):
+        try:
+            os.makedirs('user_data/plots')
+        except OSError as e:
+            raise
+
+    plot(fig, filename=str(Path('user_data/plots').joinpath(file_name)), auto_open=False)
+    if is_last:
+        plot(fig, filename=str(Path('user_data').joinpath('freqtrade-plot.html')), auto_open=False)
+
+def get_trading_env(args: Namespace):
+    global _CONF
+
+    # Load the configuration
+    _CONF.update(setup_configuration(args))
+    print(_CONF)
+
+    pairs = args.pairs.split(',')
+    if pairs is None:
+        logger.critical('Parameter --pairs mandatory;. E.g --pairs ETH/BTC,XRP/BTC')
+        exit()
+
+    # Load the strategy
+    try:
+        strategy = StrategyResolver(_CONF).strategy
+        exchange = Exchange(_CONF)
+    except AttributeError:
+        logger.critical(
+            'Impossible to load the strategy. Please check the file "user_data/strategies/%s.py"',
+            args.strategy
+        )
+        exit()
+
+    return [strategy, exchange, pairs]
+
+def get_tickers_data(strategy, exchange, pairs:List[str], args):
+
+    tick_interval = strategy.ticker_interval
+    timerange = Arguments.parse_timerange(args.timerange)
+    alltickers = []
+
+    for pair in pairs:
+        print("get_tickers_data pair: "+ pair)
+        tickers = {}
+    
+        if args.live:
+            logger.info('Downloading pair.')
+            exchange.refresh_tickers(pairs, tick_interval)
+            tickers[pair] = exchange.klines(pair)
+        else:
+            tickers = history.load_data(
+                datadir=Path(_CONF.get("datadir")),
+                pairs=[pair],
+                ticker_interval=tick_interval,
+                refresh_pairs=_CONF.get('refresh_pairs', False),
+                timerange=timerange,
+                exchange=Exchange(_CONF)
+            )
+
+            # No ticker found, or impossible to download
+            if tickers == {}:
+                logger.info('No tickers data found for pair %s, use download_backtest_data script to get them', pair)
+        
+        alltickers.append(tickers)
+
+    return alltickers
+    
+
+
+def generate_dataframe(strategy, tickers, pair) -> pd.DataFrame:
+
+    dataframes = strategy.tickerdata_to_dataframe(tickers)
+
+    dataframe = dataframes[pair]
+    dataframe = strategy.advise_buy(dataframe, {'pair': pair})
+    dataframe = strategy.advise_sell(dataframe, {'pair': pair})
+
+    return dataframe
+
+def extract_trades_of_period(dataframe, trades) -> pd.DataFrame:
+    trades = trades.loc[trades['opents'] >= dataframe.iloc[0]['date']]
+    return trades
 
 
 def generate_graph(pair, trades: pd.DataFrame, data: pd.DataFrame, args) -> tools.make_subplots:
@@ -222,6 +314,7 @@ def generate_graph(pair, trades: pd.DataFrame, data: pd.DataFrame, args) -> tool
     fig['layout']['yaxis1'].update(title='Price')
     fig['layout']['yaxis2'].update(title='Volume')
     fig['layout']['yaxis3'].update(title='Other')
+    fig['layout']['xaxis']['rangeslider'].update(visible=False)
 
     # Common information
     candles = go.Candlestick(
@@ -387,15 +480,48 @@ def plot_parse_args(args: List[str]) -> Namespace:
     return arguments.parse_args()
 
 
+def analyse_and_plot_pairs(args: Namespace):
+    strategy, exchange, pairs = get_trading_env(args)
+    
+    # Set timerange to use
+    timerange = Arguments.parse_timerange(args.timerange)
+    tick_interval = strategy.ticker_interval
+
+    tickers = get_tickers_data(strategy, exchange, pairs, args)
+    
+    pair_counter = 0
+    for tk in tickers:
+        pair_counter += 1
+        pair = list(tk)[0]
+        logger.info("analyse pair %s", pair)
+        dataframe = generate_dataframe(strategy, tk, pair)
+
+        trades = load_trades(args, pair, timerange)
+        trades = extract_trades_of_period(dataframe, trades)
+
+        fig = generate_graph(
+            pair=pair,
+            trades=trades,
+            data=dataframe,
+            args=args
+        )
+
+        is_last = (False, True)[pair_counter == len(tickers)]
+        generate_plot_file(fig, pair, tick_interval, is_last)
+
+    logger.info('End of ploting process %s plots generated', pair_counter)
+    
+
 def main(sysargv: List[str]) -> None:
     """
     This function will initiate the bot and start the trading loop.
     :return: None
     """
     logger.info('Starting Plot Dataframe')
-    plot_analyzed_dataframe(
+    analyse_and_plot_pairs(
         plot_parse_args(sysargv)
     )
+    exit()
 
 
 if __name__ == '__main__':
