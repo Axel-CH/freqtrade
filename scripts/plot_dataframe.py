@@ -280,12 +280,16 @@ def get_tickers_data(strategy, exchange, pairs: List[str], args):
             exchange=Exchange(_CONF)
         )
 
-    # No ticker found, or impossible to download
-    for pair, data in tickers.items():
-        if len(data) <= 1:
+    # No ticker found, impossible to download, len mismatch
+    for pair, data in tickers.copy().items():
+        logger.debug("checking tickers data of pair: %s", pair)
+        logger.debug("data.empty: %s", data.empty)
+        logger.debug("len(data): %s", len(data))
+        if data.empty:
+            del tickers[pair]
             logger.info(
-                'No tickers data found for pair %s,'
-                'use download_backtest_data script to get them', pair)
+                'An issue occured while retreiving datas of %s pair, please retry '
+                'using -l option for live or --refresh-pairs-cached', pair)
     return tickers
 
 
