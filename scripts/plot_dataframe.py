@@ -66,7 +66,8 @@ def load_trades(args: Namespace, pair: str, timerange: TimeRange) -> pd.DataFram
                                 t.open_date.replace(tzinfo=timeZone),
                                 t.close_date.replace(tzinfo=timeZone) if t.close_date else None,
                                 t.open_rate, t.close_rate,
-                                t.close_date.timestamp() - t.open_date.timestamp() if t.close_date else None)
+                                t.close_date.timestamp() - t.open_date.timestamp()
+                                if t.close_date else None)
                                for t in Trade.query.filter(Trade.pair.is_(pair)).all()],
                               columns=columns)
 
@@ -86,11 +87,13 @@ def load_trades(args: Namespace, pair: str, timerange: TimeRange) -> pd.DataFram
                 if timerange.stoptype == 'date':
                     trades = trades.loc[trades["opents"] <= timerange.stopts]
 
-            trades['opents'] = pd.to_datetime(trades['opents'],
+            trades['opents'] = pd.to_datetime(
+                                            trades['opents'],
                                             unit='s',
                                             utc=True,
                                             infer_datetime_format=True)
-            trades['closets'] = pd.to_datetime(trades['closets'],
+            trades['closets'] = pd.to_datetime(
+                                            trades['closets'],
                                             unit='s',
                                             utc=True,
                                             infer_datetime_format=True)
@@ -145,7 +148,6 @@ def plot_analyzed_dataframe(args: Namespace) -> None:
     for pair in pairs:
         pair_counter = pair_counter + 1
         tickers = {}
-        
         if args.live:
             logger.info('Downloading pair.')
             exchange.refresh_tickers([pair], tick_interval)
@@ -174,13 +176,12 @@ def plot_analyzed_dataframe(args: Namespace) -> None:
         dataframe = strategy.advise_sell(dataframe, {'pair': pair})
 
         if len(dataframe.index) > args.plot_limit:
-            logger.warning('Ticker contained more than %s candles as defined '
+            logger.warning(
+                        'Ticker contained more than %s candles as defined '
                         'with --plot-limit, clipping.', args.plot_limit)
         dataframe = dataframe.tail(args.plot_limit)
 
         trades = trades.loc[trades['opents'] >= dataframe.iloc[0]['date']]
-
-        ##PLOTTING PART TO SEPARATE
 
         fig = generate_graph(
             pair=pair,
@@ -202,7 +203,12 @@ def plot_analyzed_dataframe(args: Namespace) -> None:
         if pair_counter == len(pairs):
             plot(fig, filename=str(Path('user_data').joinpath('freqtrade-plot.html')))
 
+
 def generate_plot_file(fig, pair, tick_interval, is_last) -> None:
+    """
+    Generate a plot html file from pre populated fig plotly object
+    :return: None
+    """
     logger.info('Generate plot file for %s', pair)
 
     pair_name = pair.replace("/", "_")
@@ -218,7 +224,12 @@ def generate_plot_file(fig, pair, tick_interval, is_last) -> None:
     if is_last:
         plot(fig, filename=str(Path('user_data').joinpath('freqtrade-plot.html')), auto_open=False)
 
+
 def get_trading_env(args: Namespace):
+    """
+    Initalize freqtrade Exchange and Strategy, split pairs recieved in parameter
+    :return: Strategy
+    """
     global _CONF
 
     # Load the configuration
@@ -243,51 +254,60 @@ def get_trading_env(args: Namespace):
 
     return [strategy, exchange, pairs]
 
-def get_tickers_data(strategy, exchange, pairs:List[str], args):
+
+def get_tickers_data(strategy, exchange, pairs: List[str], args):
+    """
+    Get tickers data for each pairs on live or local, option defined in args
+    :return: dictinnary of tickers. output format: {'pair': tickersdata}
+    """
 
     tick_interval = strategy.ticker_interval
     timerange = Arguments.parse_timerange(args.timerange)
-    alltickers = []
 
-    for pair in pairs:
-        print("get_tickers_data pair: "+ pair)
-        tickers = {}
-    
-        if args.live:
-            logger.info('Downloading pair.')
-            exchange.refresh_tickers(pairs, tick_interval)
+    tickers = {}
+    if args.live:
+        logger.info('Downloading pairs.')
+        exchange.refresh_tickers(pairs, tick_interval)
+        for pair in pairs:
             tickers[pair] = exchange.klines(pair)
-        else:
-            tickers = history.load_data(
-                datadir=Path(_CONF.get("datadir")),
-                pairs=[pair],
-                ticker_interval=tick_interval,
-                refresh_pairs=_CONF.get('refresh_pairs', False),
-                timerange=timerange,
-                exchange=Exchange(_CONF)
-            )
+    else:
+        tickers = history.load_data(
+            datadir=Path(_CONF.get("datadir")),
+            pairs=pairs,
+            ticker_interval=tick_interval,
+            refresh_pairs=_CONF.get('refresh_pairs', False),
+            timerange=timerange,
+            exchange=Exchange(_CONF)
+        )
 
-            # No ticker found, or impossible to download
-            if tickers == {}:
-                logger.info('No tickers data found for pair %s, use download_backtest_data script to get them', pair)
-        
-        alltickers.append(tickers)
-
-    return alltickers
-    
+    # No ticker found, or impossible to download
+    for pair, data in tickers.items():
+        if len(data) <= 1:
+            logger.info(
+                'No tickers data found for pair %s,'
+                'use download_backtest_data script to get them', pair)
+    return tickers
 
 
 def generate_dataframe(strategy, tickers, pair) -> pd.DataFrame:
+    """
+    Get tickers then Populate strategy indicators and signals, then return the full dataframe
+    :return: the DataFrame of a pair
+    """
 
     dataframes = strategy.tickerdata_to_dataframe(tickers)
-
     dataframe = dataframes[pair]
     dataframe = strategy.advise_buy(dataframe, {'pair': pair})
     dataframe = strategy.advise_sell(dataframe, {'pair': pair})
 
     return dataframe
 
+
 def extract_trades_of_period(dataframe, trades) -> pd.DataFrame:
+    """
+    Compare trades and backtested pair DataFrames to get trades performed on backtested period
+    :return: the DataFrame of a trades of period
+    """
     trades = trades.loc[trades['opents'] >= dataframe.iloc[0]['date']]
     return trades
 
@@ -481,20 +501,29 @@ def plot_parse_args(args: List[str]) -> Namespace:
 
 
 def analyse_and_plot_pairs(args: Namespace):
+    """
+    From arguments provided in cli: 
+    -Initialise backtest env
+    -Get tickers data
+    -Generate Dafaframes populated with indicators and signals
+    -Load trades excecuted on same periods
+    -Generate Plotly plot objects
+    -Generate plot files
+    :return: None
+    """
     strategy, exchange, pairs = get_trading_env(args)
-    
     # Set timerange to use
     timerange = Arguments.parse_timerange(args.timerange)
     tick_interval = strategy.ticker_interval
 
     tickers = get_tickers_data(strategy, exchange, pairs, args)
-    
     pair_counter = 0
-    for tk in tickers:
+    for pair, data in tickers.items():
         pair_counter += 1
-        pair = list(tk)[0]
         logger.info("analyse pair %s", pair)
-        dataframe = generate_dataframe(strategy, tk, pair)
+        tickers = {}
+        tickers[pair] = data
+        dataframe = generate_dataframe(strategy, tickers, pair)
 
         trades = load_trades(args, pair, timerange)
         trades = extract_trades_of_period(dataframe, trades)
@@ -510,7 +539,7 @@ def analyse_and_plot_pairs(args: Namespace):
         generate_plot_file(fig, pair, tick_interval, is_last)
 
     logger.info('End of ploting process %s plots generated', pair_counter)
-    
+
 
 def main(sysargv: List[str]) -> None:
     """
