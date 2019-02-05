@@ -18,6 +18,7 @@ from freqtrade.data.converter import parse_ticker_dataframe
 from freqtrade.optimize import get_timeframe
 from freqtrade.optimize.backtesting import (Backtesting, setup_configuration,
                                             start)
+from freqtrade.state import RunMode
 from freqtrade.strategy.default_strategy import DefaultStrategy
 from freqtrade.strategy.interface import SellType
 from freqtrade.tests.conftest import log_has, patch_exchange
@@ -200,6 +201,8 @@ def test_setup_configuration_without_arguments(mocker, default_conf, caplog) -> 
 
     assert 'timerange' not in config
     assert 'export' not in config
+    assert 'runmode' in config
+    assert config['runmode'] == RunMode.BACKTEST
 
 
 def test_setup_bt_configuration_with_arguments(mocker, default_conf, caplog) -> None:
@@ -230,6 +233,8 @@ def test_setup_bt_configuration_with_arguments(mocker, default_conf, caplog) -> 
     assert 'exchange' in config
     assert 'pair_whitelist' in config['exchange']
     assert 'datadir' in config
+    assert config['runmode'] == RunMode.BACKTEST
+
     assert log_has(
         'Using data folder: {} ...'.format(config['datadir']),
         caplog.record_tuples
@@ -445,7 +450,7 @@ def test_backtesting_start(default_conf, mocker, caplog) -> None:
 
     mocker.patch('freqtrade.data.history.load_data', mocked_load_data)
     mocker.patch('freqtrade.optimize.get_timeframe', get_timeframe)
-    mocker.patch('freqtrade.exchange.Exchange.refresh_tickers', MagicMock())
+    mocker.patch('freqtrade.exchange.Exchange.refresh_latest_ohlcv', MagicMock())
     patch_exchange(mocker)
     mocker.patch.multiple(
         'freqtrade.optimize.backtesting.Backtesting',
@@ -480,7 +485,7 @@ def test_backtesting_start_no_data(default_conf, mocker, caplog) -> None:
 
     mocker.patch('freqtrade.data.history.load_data', MagicMock(return_value={}))
     mocker.patch('freqtrade.optimize.get_timeframe', get_timeframe)
-    mocker.patch('freqtrade.exchange.Exchange.refresh_tickers', MagicMock())
+    mocker.patch('freqtrade.exchange.Exchange.refresh_latest_ohlcv', MagicMock())
     patch_exchange(mocker)
     mocker.patch.multiple(
         'freqtrade.optimize.backtesting.Backtesting',
@@ -529,10 +534,11 @@ def test_backtest(default_conf, fee, mocker) -> None:
         {'pair': [pair, pair],
          'profit_percent': [0.0, 0.0],
          'profit_abs': [0.0, 0.0],
-         'open_time': [Arrow(2018, 1, 29, 18, 40, 0).datetime,
-                       Arrow(2018, 1, 30, 3, 30, 0).datetime],
-         'close_time': [Arrow(2018, 1, 29, 22, 35, 0).datetime,
-                        Arrow(2018, 1, 30, 4, 10, 0).datetime],
+         'open_time': pd.to_datetime([Arrow(2018, 1, 29, 18, 40, 0).datetime,
+                                      Arrow(2018, 1, 30, 3, 30, 0).datetime], utc=True
+                                     ),
+         'close_time': pd.to_datetime([Arrow(2018, 1, 29, 22, 35, 0).datetime,
+                                       Arrow(2018, 1, 30, 4, 10, 0).datetime], utc=True),
          'open_index': [78, 184],
          'close_index': [125, 192],
          'trade_duration': [235, 40],
@@ -657,8 +663,8 @@ def test_backtest_alternate_buy_sell(default_conf, fee, mocker):
 def test_backtest_multi_pair(default_conf, fee, mocker):
 
     def evaluate_result_multi(results, freq, max_open_trades):
-            # Find overlapping trades by expanding each trade once per period
-            # and then counting overlaps
+        # Find overlapping trades by expanding each trade once per period
+        # and then counting overlaps
         dates = [pd.Series(pd.date_range(row[1].open_time, row[1].close_time, freq=freq))
                  for row in results[['open_time', 'close_time']].iterrows()]
         deltas = [len(x) for x in dates]
