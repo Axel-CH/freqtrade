@@ -244,8 +244,6 @@ def get_callbacks(self):
                     State('radio-timeframes', 'value'),
                     State('dropdown-strategy', 'value')])
     def update_export_dfs(n_clicks, pairs, timeframe, strategy_name):
-        self.selected_dataframes = {}
-        # Pair From To
         if self.dataframes is not None:
             for pair, data in self.dataframes.items():
                 pair_name = pair.replace("/", "_")
@@ -260,10 +258,10 @@ def get_callbacks(self):
                     to_date = pd.Timestamp(self.selections[pair][1])
                     from_date_ts = from_date.value
                     to_date_ts = to_date.value
-                    filename = f'''{pair_name}-
-                                {timeframe}-
-                                {strategy_name}-
-                                {from_date_ts}_{to_date_ts}.json'''
+                    filename = (f'{pair_name}-'
+                                f'{timeframe}-'
+                                f'{strategy_name}-'
+                                f'{from_date_ts}_{to_date_ts}.json')
                     file_path = Path("user_data/dataframes").joinpath(filename)
 
                     df_to_export = data[from_date:to_date]
